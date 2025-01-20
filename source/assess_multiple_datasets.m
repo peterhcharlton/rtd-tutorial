@@ -644,6 +644,12 @@ do_msptdfastv2_benchmarking = 1;
 if do_msptdfastv2_benchmarking
     up.assessment_datasets = {'mimic_test_all', 'wesad_all_activities'};
     up.comparison_datasets = {'mimic_B', 'mimic_W', 'mimic_test_a', 'mimic_test_n', 'mimic_non_af', 'mimic_af'};
+    up.comparison_datasets = {};
+end
+do_erma_comparison = 0;
+if do_erma_comparison
+    up.assessment_datasets = {};
+    up.comparison_datasets = {'mimic_train_a', 'mimic_train_n'};
 end
 
 % (all datasets)
@@ -831,6 +837,8 @@ for comparison_no = 1 : no_comparisons
         if isequal(uParams.settings.comparisons(comparison_no,:), {'mimic_B','mimic_W'})
             leg_labels = {'Black', 'White'};
         elseif isequal(uParams.settings.comparisons(comparison_no,:), {'mimic_test_a','mimic_test_n'})
+            leg_labels = {'Adults', 'Neonates'};
+        elseif isequal(uParams.settings.comparisons(comparison_no,:), {'mimic_train_a','mimic_train_n'})
             leg_labels = {'Adults', 'Neonates'};
         elseif isequal(uParams.settings.comparisons(comparison_no,:), {'mimic_a','mimic_n'})
             leg_labels = {'Adults', 'Neonates'};
@@ -1148,9 +1156,17 @@ do_msptdfastv2_benchmarking = 1;
 if do_msptdfastv2_benchmarking
     options.beat_detectors = {'MSPTDfastv2', 'MSPTD', 'MSPTDfastv1', 'AMPD', 'qppgfast', 'ABD', 'MMPDv2', 'WEPD'};
     options.redo_selected_beat_detectors = options.beat_detectors;
+    options.redo_selected_beat_detectors = {};
     options.specified_plotting_order = options.beat_detectors;
     options.do_downsample = 0;
 end
+do_erma_comparison = 0;
+if do_erma_comparison
+    options.beat_detectors = {'ERMA', 'ERMA2', 'MSPTDfastv2'};
+    options.redo_selected_beat_detectors = {}; %options.beat_detectors;
+    options.specified_plotting_order = options.beat_detectors;
+end
+
 
 % specify beat detectors to redo
 options.redo_selected_beat_detectors = options.redo_selected_beat_detectors(:);
@@ -1227,6 +1243,10 @@ switch dataset
         dataset_file = '/Users/petercharlton/Documents/Data/mimic_perform_train_test_datasets/mimic_perform_test_a_data.mat';
     case 'mimic_test_n'
         dataset_file = '/Users/petercharlton/Documents/Data/mimic_perform_train_test_datasets/mimic_perform_test_n_data.mat';
+    case 'mimic_train_a'
+        dataset_file = '/Users/petercharlton/Documents/Data/mimic_perform_train_test_datasets/mimic_perform_train_a_data.mat';
+    case 'mimic_train_n'
+        dataset_file = '/Users/petercharlton/Documents/Data/mimic_perform_train_test_datasets/mimic_perform_train_n_data.mat';
     case 'mimic_perform_truncated_train_all'
         dataset_file = '/Users/petercharlton/Downloads/downloaded2/MIMIC_PERform_truncated_train_all_data.mat';
     case 'mimic_perform_truncated_test_all'
@@ -1367,11 +1387,12 @@ if do_qual == 1
         primary_dataset = datasets{1};
     end
     eval(['curr_beat_detectors = res.' primary_dataset '.noQual.num.strategy;']);
-    metrics = {'mae_ibi', 'ppv', 'sens', 'f1_score', 'perc_time', 'prop_ibi'};
+    metrics = {'mape_hr', 'mae_ibi', 'ppv', 'sens', 'f1_score', 'perc_time', 'prop_ibi'};
     for metric_no = 1 : length(metrics)
         rel_metric = metrics{metric_no};
         fprintf('\n - Making multiple approaches boxplot figure for: %s', rel_metric);
         rel_strategy_sets = {'noQual', 'accel', 'comb_noAccel', 'comb_Accel'};
+        rel_strategy_sets = {'ppgq_snr_negInf_0', 'ppgq_snr_0_10', 'ppgq_snr_10_20', 'ppgq_snr_20_30', 'ppgq_snr_30_Inf'};
         fig_name = sprintf('multiple_approaches_boxplot_%s', rel_metric);
         make_boxplot_figure_multiple_approaches(res, primary_dataset, curr_datasets, curr_beat_detectors, rel_metric, rel_strategy_sets, fig_name, uParams);
     end
@@ -1784,6 +1805,14 @@ for dataset_no = 1 : length(datasets)
     % identify strategies available for this dataset
     eval(['strategies_available = fieldnames(res.' curr_dataset ');']);
     rel_strategy_sets = intersect(rel_strategy_sets, strategies_available);
+
+    % re-order strategies
+    if sum(contains(rel_strategy_sets, 'ppgq_snr_negInf_0'))
+        % Find the index of 'ppgq_snr_negInf_0'
+        idx = find(strcmp(rel_strategy_sets, 'ppgq_snr_negInf_0'));
+        % Reorder: move the found element to the first position
+        rel_strategy_sets = [rel_strategy_sets(idx); rel_strategy_sets(1:idx-1); rel_strategy_sets(idx+1:end)];
+    end
     
     % extract numerical results (approaches 1 and 2)
     for approach_no = 1 : length(rel_strategy_sets)
@@ -1819,9 +1848,9 @@ for dataset_no = 1 : length(datasets)
     % inspired by: https://www.mathworks.com/matlabcentral/answers/597127-draw-a-boxplot-from-percentiles
     data = data(:, [2,2,3,3,4,4,4,5,5,6,6]);
     if strcmp(rel_metric, 'ppv')
-        subplot('Position', [0.05+(0.95*(dataset_no-1)/length(datasets)), 0.12, 0.8/length(datasets), 0.72])
+        subplot('Position', [0.05+(0.95*(dataset_no-1)/length(datasets)), 0.12, 0.94/length(datasets), 0.72])
     else
-        subplot('Position', [0.05+(0.95*(dataset_no-1)/length(datasets)), 0.12, 0.8/length(datasets), 0.77])
+        subplot('Position', [0.05+(0.95*(dataset_no-1)/length(datasets)), 0.12, 0.94/length(datasets), 0.77])
     end
     boxplot(data', labels, 'MedianStyle', 'target', 'Symbol', 'r')
     set(gca, 'XTickLabelRotation', 90)
@@ -1869,15 +1898,20 @@ for dataset_no = 1 : length(datasets)
     end
     
     % add legend
-    if dataset_no == 1 && strcmp(rel_metric, 'ppv')
+    if ( dataset_no == 1 && strcmp(rel_metric, 'ppv') ) || ( dataset_no == 1 && strcmp(rel_metric, 'mape_hr') )
         rel_els = length(h_patch) - [0:length(rel_strategy_sets)-1];
         rel_h = h_patch(rel_els);
         leg_txt = create_legend_text(rel_strategy_sets);
         if strcmp(rel_metric, 'ppv') || strcmp(rel_metric, 'sens') || strcmp(rel_metric, 'acc_hr')
             %legend(rel_h, leg_txt, 'Location', 'SouthWest');
-            legend(rel_h, leg_txt, 'Position', [0.5,0.86,0.1,0.2], 'Orientation', 'Horizontal', 'FontSize',12);
+            lgd = legend(rel_h, leg_txt, 'Position', [0.5,0.86,0.1,0.2], 'Orientation', 'Horizontal', 'FontSize',12);
+        elseif strcmp(rel_metric, 'mape_hr')
+            lgd = legend(rel_h, leg_txt, 'Orientation', 'Horizontal', 'Location', 'NorthEast');
         else
-            legend(rel_h, leg_txt, 'Location', 'NorthWest');
+            lgd = legend(rel_h, leg_txt, 'Location', 'NorthWest');
+        end
+        if sum(contains(leg_txt, '<0'))
+            title(lgd,'SNR (dB)')
         end
     end
     
@@ -1896,6 +1930,11 @@ leg_txt(strcmp(rel_strategy_sets, 'noQual')) = {'No quality tool'};
 leg_txt(strcmp(rel_strategy_sets, 'accel')) = {'Accelerometry'};
 leg_txt(strcmp(rel_strategy_sets, 'comb_noAccel')) = {'Beat detectors'};
 leg_txt(strcmp(rel_strategy_sets, 'comb_Accel')) = {'Beat detectors and Accelerometry'};
+leg_txt(strcmp(rel_strategy_sets, 'ppgq_snr_0_10')) = {'0 to 10'};
+leg_txt(strcmp(rel_strategy_sets, 'ppgq_snr_10_20')) = {'10 to 20'};
+leg_txt(strcmp(rel_strategy_sets, 'ppgq_snr_20_30')) = {'20 to 30'};
+leg_txt(strcmp(rel_strategy_sets, 'ppgq_snr_30_Inf')) = {'30+'};
+leg_txt(strcmp(rel_strategy_sets, 'ppgq_snr_negInf_0')) = {'<0'};
 
 end
 

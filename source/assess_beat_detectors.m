@@ -58,7 +58,7 @@ if nargin < 2, options = struct; end
 uParams = setup_up(dataset, options);
 
 %% Detect beats in PPG signals
-uParams.analysis.redo_analysis = 1;
+uParams.analysis.redo_analysis = 0;
 detect_beats_in_ppg_signals(uParams);
 
 %% Assess quality of PPG signals
@@ -149,7 +149,7 @@ uParams.analysis.max_lag = 10; % max permissible lag between ECG and PPG in secs
 uParams.analysis.lag_int = 0.02;
 uParams.analysis.hr_tol = 5; % tolerance in bpm of HR estimates (to be classified as accurate)
 uParams.analysis.durn_flat_line = 0.2; % threshold duration in secs, above which a flat line is considered to indicate no signal (below this it might just be due to a temporarily steady PPG value).
-uParams.analysis.sig_qual_tools = {}; % {'accel'; 'comb_beat_detectors'};  % a list of signal quality assessment tools to use
+uParams.analysis.sig_qual_tools = {}; % {'ppgq'; 'accel'; 'comb_beat_detectors'};  % a list of signal quality assessment tools to use
 uParams.analysis.sig_qual_tools = add_in_comb_beat_detectors(uParams.analysis.sig_qual_tools, uParams);
 uParams.analysis.hr_win_durn = 8; % Duration of window (in secs) over which to estimate HRs.
 %uParams.analysis.hr_win_durn = 5; % reduced for ambulatory study
@@ -476,6 +476,21 @@ if sum(rel_strategies) ~= 0      % - skip if there are no 'accel' strategies
     res = create_table_of_top_ranked_strategies(ppg_strategy_perf, rel_strategies, strategy_group_name, score_to_rank, ranking_direction, res);
 end
 
+% --- Best strategies with ppg-quality metrics
+fprintf('\n    - Rankings for strategies with ppg quality metrics')
+score_to_rank = 'mape_hr';
+ranking_direction = 'ascend'; %'descend';
+strategy_group_names = {'ppgq_snr_negInf_0', 'ppgq_snr_0_10', 'ppgq_snr_10_20', 'ppgq_snr_20_30', 'ppgq_snr_30_Inf'};
+for group_no = 1 : length(strategy_group_names)
+    strategy_group_name = strategy_group_names{group_no};
+    rel_strategies = contains(ppg_strategy_perf.stats.strategies, ['__' strategy_group_name]);
+    if sum(rel_strategies) ~= 0      % - skip if there are no relevant strategies
+        res = create_table_of_top_ranked_strategies(ppg_strategy_perf, rel_strategies, strategy_group_name, score_to_rank, ranking_direction, res);
+    end
+    clear rel_strategies strategy_group_name
+end
+clear strategy_group_names group_no
+
 
 %% Save performance results
 save(filepath, 'res');
@@ -577,6 +592,8 @@ for metric_no = 1 : length(perf_metrics)
             qual{el_no,1} = 'none';
         elseif strcmp(strategy_text(temp(1):end), '__accel')
             qual{el_no,1} = 'accel';
+        elseif strcmp(strategy_text(temp(1):temp(1)+5), '__ppgq')
+            qual{el_no,1} = strategy_text(temp(1)+7:end);
         else
             temp = strfind(strategy_text, 'comb_');
             temp2 = strfind(strategy_text, '_'); temp2 = temp2(temp2>(temp(1)));
@@ -658,6 +675,8 @@ for strategy_no = 1 : length(strategies_remaining)
     elseif contains(curr_qual_tool, 'comb') && ~contains(curr_qual_tool, curr_beat_detector) % in this case the time taken to run the beat detector is not included in the qual tool time
         eval(['curr_ppg_timings = ppg_timings.' curr_beat_detector ' + ppg_qual_timings.' curr_qual_tool ';']);
     elseif strcmp(curr_qual_tool, 'accel') % in this case the time taken to run the beat detector is not included in the qual tool time
+        eval(['curr_ppg_timings = ppg_timings.' curr_beat_detector ' + ppg_qual_timings.' curr_qual_tool ';']);
+    elseif strcmp(curr_qual_tool(1:4), 'ppgq') % in this case the time has not been measured
         eval(['curr_ppg_timings = ppg_timings.' curr_beat_detector ' + ppg_qual_timings.' curr_qual_tool ';']);
     else 
         error('this shouldn''t happen')
@@ -942,7 +961,7 @@ end
 
 % calculate HR
 no_beats = length(beats_t)-1; % take off one to give the number of complete heart beats in this time period
-time_diff = range(beats_t); % in secs
+time_diff = max(beats_t)-min(beats_t); % in secs
 hr = 60*(no_beats/time_diff); % in bpm
 
 end
@@ -1000,37 +1019,50 @@ function sig_qual_tools = add_in_comb_beat_detectors(sig_qual_tools, uParams)
 % - add in 'none' - i.e. not using quality assessment
 sig_qual_tools = ['none'; sig_qual_tools(:)];
 
+%% ppg-quality metrics
+if sum(strcmp(sig_qual_tools, 'ppgq'))
+    % add each individual tool
+    ppgq_tools_to_be_added = {'ppgq_snr_negInf_0', 'ppgq_snr_0_10', 'ppgq_snr_10_20', 'ppgq_snr_20_30', 'ppgq_snr_30_Inf'};
+    for tool_no = 1 : length(ppgq_tools_to_be_added)
+        sig_qual_tools{end+1} = ppgq_tools_to_be_added{tool_no};
+    end
+    % remove 
+    sig_qual_tools = sig_qual_tools(~strcmp(sig_qual_tools, 'ppgq'));
+end
+
+%% comb beat detectors
+
 % skip if the 'comb_beat_detectors' option hasn't been specified
-if ~sum(strcmp(sig_qual_tools, 'comb_beat_detectors'))
-    return
-end
+if sum(strcmp(sig_qual_tools, 'comb_beat_detectors'))
 
-%  -- Identify PPG beat detector combinations
-beat_detectors = uParams.analysis.beat_detectors;
-for detector1_no = 1 : length(beat_detectors)
-    for detector2_no = detector1_no : length(beat_detectors)
-        % skip if this is the same beat detector
-        if detector1_no == detector2_no
-            continue
+    %  -- Identify PPG beat detector combinations
+    beat_detectors = uParams.analysis.beat_detectors;
+    for detector1_no = 1 : length(beat_detectors)
+        for detector2_no = detector1_no : length(beat_detectors)
+            % skip if this is the same beat detector
+            if detector1_no == detector2_no
+                continue
+            end
+            sig_qual_tools{end+1,1} = ['comb_', beat_detectors{detector1_no}, '_', beat_detectors{detector2_no}];
         end
-        sig_qual_tools{end+1,1} = ['comb_', beat_detectors{detector1_no}, '_', beat_detectors{detector2_no}];
     end
-end
 
-%  -- remove 'comb_beat_detectors'
-sig_qual_tools = sig_qual_tools(~strcmp(sig_qual_tools, 'comb_beat_detectors'));
+    %  -- remove 'comb_beat_detectors'
+    sig_qual_tools = sig_qual_tools(~strcmp(sig_qual_tools, 'comb_beat_detectors'));
 
-%  -- add in combinations with accel
-if sum(strcmp(sig_qual_tools, 'accel'))
-    non_accel_tools = sig_qual_tools(~contains(sig_qual_tools, 'accel') & ~strcmp(sig_qual_tools, 'none'));
-    for tool_no = 1 : length(non_accel_tools)
-        curr_tool = non_accel_tools{tool_no};
-        sig_qual_tools{end+1} = ['accel_', curr_tool];
-        clear curr_tool
+    %  -- add in combinations with accel
+    if sum(strcmp(sig_qual_tools, 'accel'))
+        non_accel_tools = sig_qual_tools(~contains(sig_qual_tools, 'accel') & ~strcmp(sig_qual_tools, 'none'));
+        for tool_no = 1 : length(non_accel_tools)
+            curr_tool = non_accel_tools{tool_no};
+            sig_qual_tools{end+1} = ['accel_', curr_tool];
+            clear curr_tool
+        end
+        clear tool_no
     end
-    clear tool_no
+    clear non_accel_tools
+
 end
-clear non_accel_tools
 
 end                
 
@@ -1654,6 +1686,21 @@ for subj_no = 1 : uParams.dataset_details.no_subjs
             eval(['ppg_qual.' curr_tool ' = curr_qual;']);
             eval(['ppg_qual_timings.' curr_tool ' = other_timing + accel_timing;']);
             clear curr_qual curr_tool accel_qual other_qual temp other_timing accel_timing
+
+        elseif strcmp(curr_tool(1:5), 'ppgq_')
+
+            % - use ppg-quality toolbox to extract ppg quality metrics
+            fprintf('ppg-quality metrics, ');
+            tic
+            [curr_qual, curr_timing] = assess_qual_using_ppg_quality_metrics(data(subj_no).ppg, ppg_details, subj_no, curr_tool, uParams);
+            curr_timing = toc;
+            
+            % store results
+            ppg_qual.(curr_tool) = curr_qual.(curr_tool);
+            ppg_qual.(curr_tool).fs = ppg_details.fs;
+            ppg_qual_timings.(curr_tool) = curr_timing; % the timings aren't currently measured
+            clear curr_qual curr_tool curr_timing
+
         end
         
     end
@@ -1665,6 +1712,51 @@ for subj_no = 1 : uParams.dataset_details.no_subjs
     
 end
 clear subj_no
+
+end
+
+function [curr_qual, curr_timing] = assess_qual_using_ppg_quality_metrics(ppg, ppg_details, subj_no, curr_tool, uParams)
+
+%% PPG quality metrics
+
+% check whether ppg-quality toolbox is on the search path
+str = which('assess_ppg_quality');
+if isempty(str)
+    error('This functionality requires the ppg-quality toolbox - see: https://ppg-quality.readthedocs.io/');
+end
+options.quality_metrics = {'snr', 'amp_metrics'};
+[qual, onsets] = assess_ppg_quality(ppg.v, ppg.fs, options);
+
+%% Create vector of qualities at PPG's original sampling freq
+do_all = false;
+if do_all
+    qual_vars = fieldnames(qual);
+    for qual_var_no = 1 : length(qual_vars)
+        curr_var_name = qual_vars{qual_var_no};
+        curr_var.v = qual.(curr_var_name);
+        curr_var.t = (onsets-1)/ppg.fs;
+        curr_var.hq = zeros(size(curr_var.v)); % dummy - as we don't yet know what consistitutes high qual for these parameters
+        curr_qual.(curr_var_name) = create_vector_of_quals_at_ppg_freq(ppg_details, curr_var, 1);
+    end
+end
+do_snr_cats = true;
+if do_snr_cats
+    threshs = [-inf, 0, 10, 20, 30, inf];
+    for thresh_no = 1 : length(threshs)-1
+        snr_low_thresh = threshs(thresh_no);
+        snr_high_thresh = threshs(thresh_no+1);
+        curr_var.v = qual.snr;
+        curr_var.t = (onsets-1)/ppg.fs;
+        curr_var.hq = curr_var.v>=snr_low_thresh & curr_var.v<snr_high_thresh;
+        curr_var = create_vector_of_quals_at_ppg_freq(ppg_details, curr_var, 1);
+        low_thresh_name = strrep(num2str(snr_low_thresh),'-Inf','negInf');
+        curr_var_name = ['ppgq_snr_', low_thresh_name, '_', num2str(snr_high_thresh)];
+        curr_qual.(curr_var_name) = curr_var;
+    end
+end
+
+%% timing
+curr_timing = nan;
 
 end
 
